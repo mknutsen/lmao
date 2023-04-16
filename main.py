@@ -4,6 +4,7 @@ from pygame import midi
 from enum import Enum, auto
 from time import time
 from pygame.color import THECOLORS
+from pygame import font
 
 from random import choice
 # pygame setup
@@ -12,10 +13,9 @@ if not midi.get_init():
     midi.init()
 
 jumps = 0
-pygame.font.init()
+font.init()
 py_midi_in = midi.Input(0)
-player_rect = pygame.Rect(0, 0, 20, 20)
-gravity = 4
+gravity = 9.5
 pygame.quit()
 screen = pygame.display.set_mode((1280, 720))
 clock = pygame.time.Clock()
@@ -23,17 +23,44 @@ running = True
 dt = 0
 SECONDS_PER_MINUTE = 60
 PULSES_PER_SIXTEENTH_NOTE = 6 * 4
-
+JUMP_VELOCITY = -5
+DEBUG = False
+MOVE_SPEED = 400
 player_pos = pygame.Vector2(screen.get_width() / 2, screen.get_height() / 2)
 import math
+
+def debug_print(*string):
+    if DEBUG:
+        print(string)
+
+class Character():
+    def __init__(self, rect) -> None:
+        self.rect = rect
+        self.y_velocity = 0
+    def reset_y(self):
+        global JUMP_ACTIVE
+        JUMP_ACTIVE = False
+        self.y_velocity = 0
+        self.rect.move_ip(0, -screen.get_height())
+
+    def move(self, x, dt):
+        self.rect.move_ip(x, self.y_velocity)
+        self.y_velocity = dt * gravity + self.y_velocity
+        debug_print("move velocity", self.y_velocity)
+    def jump(self):
+        global JUMP_ACTIVE
+        if self.rect.collidelist(rectangles) and not JUMP_ACTIVE:
+            self.y_velocity = JUMP_VELOCITY
+            debug_print("jump", self.y_velocity)
+            JUMP_ACTIVE = True
+
 class MidiClock():
     def __init__(self) -> None:
         self.times = list()
     def tap(self):
         self.times.append(time())
-        print(self.get_beat())
         if len(self.times) >= 2000:
-            print("resetting")
+            debug_print("resetting")
             self.times = self.times[-100:]
     def get_seconds_per_quarter_note(self):
         self.get_beat() / 60
@@ -44,7 +71,7 @@ class MidiClock():
         for i in range(0, len(sub_arr) - 1):
             diffs.append(sub_arr[i + 1] - sub_arr[i])
         if not diffs:
-            print("no clock!")
+            debug_print("no clock!")
             return 1
         average_seconds_between_tics = sum(diffs) / len(diffs)
         # beats_per_minute = SECONDS_PER_MINUTE / average_seconds_between_tics / PULSES_PER_SIXTEENTH_NOTE
@@ -58,7 +85,7 @@ class MidiNote():
         self.velocity = velocity
         self.unused = unused
         self.status = parse_midi_status(note_status)
-        print(self.status)
+        debug_print(self.status)
     
 class MidiStatus(Enum):
     NOTE_OFF = auto()
@@ -85,7 +112,7 @@ class MidiException(Exception):
     """Midi exception"""
 
 def randomcolor():
-    return choice(list(THECOLORS.keys()))
+    return choice([color for color in list(THECOLORS.keys()) if color != "black"])
 
 def parse_midi_status(input):
     if input >= 0x80 and input <= 0x8F:
@@ -127,16 +154,18 @@ def parse_midi_status(input):
 
     raise MidiException(input)
 
+JUMP_ACTIVE = False
 def process_character_press(keys):
+    global jump
     global player_pos
-    # if keys[pygame.K_UP]:
-    #     player_pos.y -= 300 * dt
-    # if keys[pygame.K_DOWN]:
-    #     player_pos.y += 300 * dt
+    if keys[pygame.K_UP]:
+        PLAYER_CHARACTER.jump()
+    if keys[pygame.K_DOWN]:
+        player_pos.y += 300 * dt
     if keys[pygame.K_LEFT]:
-        player_rect.move_ip(-300 * dt, 0)
+        PLAYER_CHARACTER.move(-MOVE_SPEED * dt, 0)
     if keys[pygame.K_RIGHT]:
-        player_rect.move_ip(300 * dt, 0)
+        PLAYER_CHARACTER.move(MOVE_SPEED * dt, 0)
 
 def _SECONDS_TO_MILLISECONDS(time_sec):
     return time_sec * 1000
@@ -147,7 +176,17 @@ SECONDS_PER_NOTE = 1
 HEIGHT = screen.get_height() /  UPPER_VALUE
 WIDTH = screen.get_width()
 CLOCK = MidiClock()
-rectangles = [pygame.Rect(0, i * HEIGHT, WIDTH, HEIGHT) for i in range(0, UPPER_VALUE)]
+
+def land(character_place):
+    global COLORS, jumps, JUMP_ACTIVE
+    JUMP_ACTIVE = False
+    if COLORS[character_place] != "black":
+        COLORS[character_place] = "black"
+        jumps += 1
+
+player_rect = pygame.Rect(WIDTH/2, 0, 20, 20)
+PLAYER_CHARACTER = Character(player_rect)
+rectangles = [pygame.Rect(0, i * HEIGHT, WIDTH / 4, 75) for i in range(0, UPPER_VALUE)]
 class GameState:
     def __init__(self):
         self.slots = [0 for i in range(0, UPPER_VALUE)]
@@ -156,6 +195,7 @@ class GameState:
         global COLORS
         if slot < UPPER_VALUE and slot >= 0:
             rectangles[slot].left = WIDTH
+            COLORS[slot] = randomcolor()
     
     def process(self, rate, dt):
         global rectangles
@@ -176,8 +216,10 @@ def process_midi():
             game.tag(real_note)
 
 game = GameState()
-font = pygame.font.Font('freesansbold.ttf', 20)
-
+font.init()
+all_fonts = font.get_fonts()
+debug_print(all_fonts)
+font_object = font.Font(None, 24)
 while running:
     num_cells = WIDTH
     beat = CLOCK.get_beat() * 10
@@ -193,7 +235,7 @@ while running:
         process_midi()
 
     # fill the screen with a color to wipe away anything from last frame
-    screen.fill("purple")
+    screen.fill("purple" if JUMP_ACTIVE else "red")
 
 
     for i in range(0, UPPER_VALUE):
@@ -204,13 +246,16 @@ while running:
     pygame.draw.rect(screen, "black", player_rect)
     character_place = player_rect.collidelist(rectangles)
     if character_place < 0:
-        player_rect.move_ip(0, gravity)
+        PLAYER_CHARACTER.move(0, dt)
         pass
+    else:
+        land(character_place)
 
     if player_rect.bottom >= screen.get_height():
-        player_rect.move_ip(0, -screen.get_height())
+        jumps = 0
+        PLAYER_CHARACTER.reset_y()
     
-    img = font.render(f'{jumps}', True, randomcolor())
+    img = font_object.render(f'{jumps}', True, randomcolor())
     screen.blit(img, (20, 20))
 
 
@@ -220,6 +265,6 @@ while running:
     # limits FPS to 60
     # dt is delta time in seconds since last frame, used for framerate-
     # independent physics.
-    dt = clock.tick(100) / 1000
+    dt = clock.tick() / 1000
 
 pygame.quit()
